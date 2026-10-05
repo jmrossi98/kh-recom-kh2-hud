@@ -1,0 +1,5 @@
+# game data and build output, never commit
+/extracted/
+/build/
+__pycache__/
+.vscode/
