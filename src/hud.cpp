@@ -18,6 +18,8 @@ constexpr uintptr_t kLoading     = 0xAF70CA;  // 0xFF while loading
 constexpr uintptr_t kGetFlags    = 0x1B08C0;  // uint (int group, int id)
 constexpr uintptr_t kSetFlags    = 0x1B16C0;  // void (int group, int id, uint value)
 constexpr uintptr_t kMapCardGate = 0x1E4818;  // and eax,8: hide test for the map card panel
+constexpr uintptr_t kSubField    = 0x87B0B0;  // -> CGameSubField; +0x5A0 flags for what is open over the game
+constexpr uintptr_t kHudOff      = 0x87B808;  // int, non-zero while the game keeps its own HUD off
 }
 
 // Flag word the battle HUD checks. Bit 0 hides the player's portrait and HP ring.
@@ -101,8 +103,9 @@ struct SharedState {
     LONG subCount;
     LONG subSelected;
     char subNames[16][24];
+    char context[24];  // something in reach to act on, empty for nothing
 };
-constexpr char kSharedName[] = "Local\\recom_mods_v2";
+constexpr char kSharedName[] = "Local\\recom_mods_v3";
 
 // Whichever mod loads first makes the block.
 static volatile SharedState* shared_state() {
@@ -123,12 +126,41 @@ static void set_gauge_hidden(bool hidden) {
     if (want != f) reinterpret_cast<SetFlagsFn>(g_base + rva::kSetFlags)(kFlagGroup, kFlagCards, want);
 }
 
+// True while something of the game's own is up over play: the start menu, the
+// pause screen, the save menu. The game asks the same question before it lets
+// a menu open, with the same mask.
+static bool game_menu_open() {
+    constexpr uintptr_t kSfFlags = 0x5A0;
+    constexpr uint32_t kBusy = 0x80201C01;
+    uintptr_t sub = at<uintptr_t>(g_base + rva::kSubField);
+    uint32_t flags = sub ? at<uint32_t>(sub + kSfFlags) : 0;
+    return (flags & kBusy) != 0 || at<int32_t>(g_base + rva::kHudOff) != 0;
+}
+
+// Outside battle: true while Sora is the player's to move. He is not during
+// a door's room synthesis screen, while a chest opens or in a scene. The game
+// takes control away for a moment in ordinary play too, so only a spell of
+// it counts.
+static bool field_player_free(uintptr_t player) {
+    constexpr uintptr_t kPlControl = 0x230;   // bit 0: the player has control
+    constexpr uintptr_t kPlState = 0x40C;     // what he is doing
+    constexpr unsigned kGrace = 12;           // frames
+    static unsigned busy = 0;
+    const int32_t state = at<int32_t>(player + kPlState);
+    // opening a chest, making a room at a door, picking a world, going through a door
+    if (state == 0x11 || state == 0x14 || state == 0x15 || state == 0x1D) return false;
+    if (at<uint32_t>(player + kPlControl) & 1) busy = 0;
+    else if (busy < 1000) ++busy;
+    return busy < kGrace;
+}
+
 static void frame() {
     OverlayState& hud = overlay_state();
     hud.gauge = true;
     hud.kh2Hud = true;
     hud.mpBar = false;
     hud.menu = false;
+    hud.context = nullptr;
     if (volatile SharedState* b = shared_state()) {
         b->hudTick = GetTickCount64();
         // With the combat mod running there is a command menu to draw and MP
@@ -148,13 +180,17 @@ static void frame() {
                 names[i][23] = 0;
                 hud.subNames[i] = names[i];
             }
+            static char context[24];
+            memcpy(context, const_cast<char*>(b->context), 24);
+            context[23] = 0;
+            hud.context = context[0] ? context : nullptr;
         }
     }
     hud.world = at<uint8_t>(g_base + rva::kWorld);
     uintptr_t player = at<uintptr_t>(g_base + rva::kPlayerPtr);
     hud.battle = at<uint8_t>(g_base + rva::kBattleFlag) == 1 && player;
     if (hud.battle) {
-        hud.visible = true;
+        hud.visible = !game_menu_open();
         hud.hp = at<int32_t>(player + kPlHp);
         hud.hpMax = at<int32_t>(player + kPlHpMax);
     } else {
@@ -162,7 +198,8 @@ static void frame() {
         // not there.
         uintptr_t save = at<uintptr_t>(g_base + rva::kSavePtr);
         hud.visible = player && save && at<uint8_t>(g_base + rva::kWorld) != 0xFF &&
-                      at<uint8_t>(g_base + rva::kLoading) != 0xFF;
+                      at<uint8_t>(g_base + rva::kLoading) != 0xFF && !game_menu_open() &&
+                      field_player_free(player);
         if (hud.visible) {
             hud.hp = at<int32_t>(save);
             hud.hpMax = at<int32_t>(save + 4);

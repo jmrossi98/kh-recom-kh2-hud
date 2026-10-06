@@ -1073,6 +1073,9 @@ constexpr int kSlotMid[2] = {16, 29};        // unselected slot
 constexpr int kSlotLast[2] = {11, 24};       // unselected slot closing the menu
 constexpr int kIconRing[2] = {45, 46};       // glow behind the selected slot's icon
 constexpr int kBottom = 6;                   // trim under the last slot, on skins that have it
+constexpr int kReaction = 2, kReactionOut = 0;   // the reaction command's bar: coming up and resting, fading out
+constexpr float kReactionX = 36, kReactionY = 377;   // its place, with the header's row taken off y for every slot
+constexpr float kReactionTextX = 18, kReactionTextY = -3.5f;   // label, from the bar's origin
 constexpr int kIcon[4] = {37, 41, 39, 44};   // keyblade, hat, potion, charm
 // lists, by command: Magic, Items, Summon
 constexpr int kSubHeader[4] = {-1, 60, 51, 73};
@@ -1091,7 +1094,7 @@ constexpr float kLevelShift = 16;            // a list sits this far right of th
 constexpr float kTextX = 10, kTextY = -8;    // label, from the slot's art
 constexpr float kTextSize = 14.0f / 18;      // size 14 in a font drawn at 18
 constexpr float kTextShadow = 2;             // black at half strength, down and right
-constexpr float kGlyphDrop = 1.5f;           // the sheet's glyphs start this far down their cell (measured)
+constexpr float kGlyphDrop = 3.0f;           // the sheet's glyphs start this far down their cell (measured)
 constexpr int kListRows = 5;                 // rows of a list on screen at once
 }
 
@@ -1305,6 +1308,27 @@ void draw_menu_kh2() {
             if (slot_y(4, i) >= coveredFrom) continue;
             if (i == st.selected) label(sx, sy, selShift, kItems[i], bright);
             else label(ox, slot_y(4, i), shift, kItems[i], dim);
+        }
+    }
+    // Something in reach to act on shows the way KH2 shows a reaction
+    // command: its green bar over the menu, with the button and the word.
+    // The bar's own animation brings it up; another fades it out.
+    {
+        static char reaction[24] = "";
+        static unsigned reactionFrame = 0;
+        static bool up = false;
+        const bool want = st.context && !st.subOpen;
+        if (want != up || (want && strcmp(st.context, reaction) != 0)) up = want, reactionFrame = g_frameNo;
+        if (want) strncpy_s(reaction, st.context, _TRUNCATE);
+        const int age = g_testSince >= 0 ? 1000 : static_cast<int>(g_frameNo - reactionFrame);
+        const int outLast = group_last(seq, cmd::kReactionOut);
+        if (reaction[0] && (up || age <= outLast)) {
+            const float rx = cmd::kReactionX * ux, ry = g_h - (416 - (cmd::kReactionY - cmd::kRowPitch * 4)) * u;
+            g_out = &g_cmdVerts;
+            seq_draw(seq, up ? cmd::kReaction : cmd::kReactionOut, age, rx, ry, u);
+            const float fade = up ? (age < 6 ? age / 6.0f : 1) : 1 - age / static_cast<float>(outLast > 0 ? outLast : 1);
+            const float c[4] = {bright[0], bright[1], bright[2], fade};
+            menu_text(rx + cmd::kReactionTextX * ux, ry + (cmd::kReactionTextY - cmd::kGlyphDrop) * u, reaction, c);
         }
     }
     if (!st.subOpen) {
