@@ -20,9 +20,11 @@ Work in progress.
 
 It works by itself. Together with
 [kh-recom-mod](https://github.com/jmrossi98/kh-recom-mod), which replaces the
-card combat with a command menu, that menu takes KH2's skin for the world you
-are in and the MP bar joins the gauge. The two find each other at run time,
-there is nothing to configure.
+card combat with a command menu, this mod draws that menu too, in KH2's style
+with the skin of the world you are in, and shows MP under the gauge. Neither
+mod needs the other and neither holds the other's code; they find each other
+at run time through a small block of shared memory, and there is nothing to
+configure.
 
 ## Art
 
@@ -37,8 +39,8 @@ needs from your own extracted copies of Re:CoM and KH2 (both are in HD
 - `scripts/kh2hud.lua` - LuaBackend script, loads the dll and calls it every frame.
 - `src/hud.cpp` - native side: reads HP, hides the game's own gauge.
 - `src/overlay.cpp` - draws over the game. The game presents from a D3D12 swap
-  chain, so this hooks Present and draws through D3D11On12. Same file as in
-  kh-recom-mod; each mod only switches on its own part.
+  chain, so this hooks Present and draws through D3D11On12. Holds the KH2
+  gauge and KH2's command menu.
 - `tools_dev/` - `make_assets.py`, two test programs that render the overlay
   to a BMP without the game (`build_test.bat`), and `kh2seq.py`, a software
   renderer for KH2 sequence files.

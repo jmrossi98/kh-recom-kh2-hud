@@ -80,30 +80,39 @@ static void install_patches() {
     uint8_t* panel = reinterpret_cast<uint8_t*>(g_base + rva::kMapCardGate);
     const uint8_t panel_expect[3] = {0x83, 0xE0, 0x08};
     const uint8_t panel_hide[3]   = {0x83, 0xC8, 0x08};
-    if (memcmp(panel, panel_expect, 3) == 0 && write_code(panel, panel_hide, 3)) logf("map card panel hidden");
+    if (memcmp(panel, panel_hide, 3) == 0) logf("map card panel already hidden");   // the combat mod got there first
+    else if (memcmp(panel, panel_expect, 3) == 0 && write_code(panel, panel_hide, 3)) logf("map card panel hidden");
     else logf("map card panel: unexpected bytes, leaving it");
 }
 
 // What the combat mod and the KH2 HUD mod tell each other, in a small named
-// block of shared memory the HUD mod creates. Each stamps its tick every frame
-// so the other knows it is there. MP belongs to the pair: the combat mod only
-// charges for magic while the HUD mod is up to show the bar.
-struct SharedHud {
+// block of shared memory. Neither needs the other; each stamps its tick every
+// frame so the other can tell it is there. When both are, the HUD mod draws
+// the command menu in KH2's style from what the combat mod puts here, and
+// magic costs MP, which the HUD mod shows.
+struct SharedState {
     ULONGLONG hudTick;
     ULONGLONG combatTick;
     float mp;          // 0..1
     LONG mpCharging;
+    // the command menu, written by the combat mod
+    LONG selected;     // row of the main menu
+    LONG subOpen;      // a list is open over it
+    LONG subCount;
+    LONG subSelected;
+    char subNames[16][24];
 };
-constexpr char kSharedName[] = "Local\\recom_kh2_hud";
+constexpr char kSharedName[] = "Local\\recom_mods_v2";
 
-static volatile SharedHud* shared_hud() {
-    static volatile SharedHud* block = nullptr;
+// Whichever mod loads first makes the block.
+static volatile SharedState* shared_state() {
+    static volatile SharedState* block = nullptr;
     static bool tried = false;
     if (!tried) {
         tried = true;
-        if (HANDLE h = CreateFileMappingA(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(SharedHud),
+        if (HANDLE h = CreateFileMappingA(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(SharedState),
                                           kSharedName))
-            block = static_cast<SharedHud*>(MapViewOfFile(h, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, sizeof(SharedHud)));
+            block = static_cast<SharedState*>(MapViewOfFile(h, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, sizeof(SharedState)));
     }
     return block;
 }
@@ -119,12 +128,27 @@ static void frame() {
     hud.gauge = true;
     hud.kh2Hud = true;
     hud.mpBar = false;
-    if (volatile SharedHud* b = shared_hud()) {
+    hud.menu = false;
+    if (volatile SharedState* b = shared_state()) {
         b->hudTick = GetTickCount64();
-        // MP shows while the combat mod is there to keep count of it
-        hud.mpBar = GetTickCount64() - b->combatTick < 500;
-        hud.mp = b->mp;
-        hud.mpCharging = b->mpCharging != 0;
+        // With the combat mod running there is a command menu to draw and MP
+        // to show. It keeps both; this only copies them out.
+        if (GetTickCount64() - b->combatTick < 500) {
+            static char names[16][24];
+            hud.mpBar = true;
+            hud.mp = b->mp;
+            hud.mpCharging = b->mpCharging != 0;
+            hud.menu = true;
+            hud.selected = b->selected;
+            hud.subOpen = b->subOpen != 0;
+            hud.subCount = b->subCount < 0 ? 0 : (b->subCount > 16 ? 16 : b->subCount);
+            hud.subSelected = b->subSelected;
+            for (int i = 0; i < hud.subCount; ++i) {
+                memcpy(names[i], const_cast<char*>(b->subNames[i]), 24);
+                names[i][23] = 0;
+                hud.subNames[i] = names[i];
+            }
+        }
     }
     hud.world = at<uint8_t>(g_base + rva::kWorld);
     uintptr_t player = at<uintptr_t>(g_base + rva::kPlayerPtr);
